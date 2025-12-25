@@ -1,0 +1,23 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+.next/
+out/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# local data / storage
+data/pdfs/
+data/chroma/
+*.sqlite
+*.db
+
+# mac
+.DS_Store
