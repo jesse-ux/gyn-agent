@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-green)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-14%2B-black)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16%2B-black)](https://nextjs.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 一个面向**女性用户**的妇科健康科普问答 Agent 练习项目，基于本地 PDF 构建知识库，支持网页端问答与流式输出。
@@ -24,6 +24,7 @@ PDF → 清洗 → HanLP切片 → 向量化(Qwen Embedding)
 - ✅ 本地部署，数据隐私安全
 - ✅ 支持流式/非流式两种问答模式
 - ✅ 智能去重，避免重复引用
+- ✅ 语音输入支持（Whisper + LLM 纠错）
 
 ---
 
@@ -46,6 +47,7 @@ PDF → 清洗 → HanLP切片 → 向量化(Qwen Embedding)
 - **圆形数字标签** - 悬停/点击查看引用详情
 - **渐进式显示** - 先显示答案，完成后展示来源
 - **实时状态** - 显示生成进度和耗时
+- **语音输入** - 麦克风录音，自动转文字（支持中文医疗术语纠错）
 
 ---
 
@@ -53,19 +55,22 @@ PDF → 清洗 → HanLP切片 → 向量化(Qwen Embedding)
 
 | 类别 | 技术 | 版本 |
 |------|------|------|
-| **前端** | Next.js (App Router) | 14+ |
+| **前端** | Next.js (App Router) | 16+ |
 | **后端** | FastAPI | 0.115+ |
 | **向量库** | Chroma | 1.4+ |
 | **NLP** | HanLP | 2.1+ |
+| **语音** | Whisper (small) | - |
 | **LLM** | Ollama (Qwen) | 0.4+ |
 
 **模型配置：**
 ```bash
-# Embedding 模型
-ollama pull qwen3-embedding:0.6b
+# Embedding 模型（用于向量检索）
+ollama pull dengcao/Qwen3-Embedding-0.6B:Q8_0
 
-# LLM 模型（可替换为更大模型）
-ollama pull qwen3:0.6b
+# LLM 模型（用于问答生成和语音纠错）
+ollama pull Qwen3:0.6B
+
+# Whisper 会自动下载（首次运行时）
 ```
 
 ---
@@ -76,14 +81,18 @@ ollama pull qwen3:0.6b
 gyn-agent/
 ├── apps/
 │   └── web/                    # Next.js 前端
-│       └── app/
-│           ├── chat/           # 问答页面
-│           └── api/qa/         # API 代理层
+│       ├── app/
+│       │   ├── chat/           # 问答页面
+│       │   └── api/            # API 代理层
+│       │       ├── qa/         # Q&A 代理
+│       │       └── transcribe/ # 语音转文字代理
+│       └── components/
+│           └── AudioRecorder.tsx # 语音录制组件
 │
 ├── services/
 │   └── rag_api/                # FastAPI 后端
 │       └── app/
-│           └── main.py         # API 入口
+│           └── main.py         # API 入口（含 Whisper）
 │
 ├── scripts/                     # RAG 核心逻辑
 │   ├── config.py               # 配置文件
@@ -91,7 +100,8 @@ gyn-agent/
 │   ├── text_splitter.py        # 文本切片
 │   ├── embeddings.py           # 向量化
 │   ├── chroma_store.py         # 向量库封装
-│   └── qa_bot.py               # 问答机器人
+│   ├── qa_bot.py               # 问答机器人
+│   └── main.py                 # 索引构建脚本
 │
 ├── data/
 │   ├── chroma/                 # Chroma 持久化目录
@@ -134,11 +144,11 @@ npm install
 ### 2️⃣ 拉取模型
 
 ```bash
-# Embedding 模型
-ollama pull qwen3-embedding:0.6b
+# Embedding 模型（用于向量检索）
+ollama pull dengcao/Qwen3-Embedding-0.6B:Q8_0
 
-# LLM 模型
-ollama pull qwen3:0.6b
+# LLM 模型（用于问答生成和语音纠错）
+ollama pull Qwen3:0.6B
 ```
 
 > 💡 如使用其他模型，请修改 `scripts/config.py` 中的配置。
@@ -150,7 +160,7 @@ ollama pull qwen3:0.6b
 
 # 运行索引脚本
 source .venv/bin/activate
-python scripts/generate_index.py
+python scripts/main.py
 ```
 
 索引完成后，向量数据会保存到 `data/chroma/`。
@@ -263,6 +273,36 @@ data: {"type": "done", "request_id": "123", "latency_ms": 5678}
 
 ---
 
+### 语音转文字
+
+**端点：** `POST /v1/transcribe`
+
+**请求格式：** `multipart/form-data`
+- `file`: 音频文件（支持 .wav, .mp3, .m4a, .webm）
+
+**响应示例：**
+```json
+{
+  "text": "9价疫苗可以预防哪些型别的HPV病毒？"
+}
+```
+
+**特性说明：**
+1. **Whisper 转录** - 使用 small 模型，带医疗上下文提示词
+2. **LLM 纠错** - 自动修正医疗术语的语音识别错误：
+   - "9架"/"九家" → "9价" (HPV 疫苗)
+   - "垃圾种" → "哪几种"
+   - "囊种" → "囊肿"
+   - "极流" → "肌瘤"
+   - "爱吃皮威" → "HPV"
+3. **低温度设置** - temperature=0.1，保证纠错严谨性
+
+**前端集成：**
+- 使用 `AudioRecorder` 组件（已内置在 `/chat` 页面）
+- 点击麦克风按钮录音，自动转文字并追加到输入框
+
+---
+
 ## ⚖️ 免责声明
 
 本项目用于**学习与工程实践**：
@@ -286,9 +326,9 @@ data: {"type": "done", "request_id": "123", "latency_ms": 5678}
 - [ ] **评测集** - 构建 50~200 条问题集，评估召回率/准确率
 
 ### 🎤 语音交互
-- [ ] 语音输入（STT）- 接入 Whisper / faster-whisper
+- [x] 语音输入（STT）- ✅ Whisper + LLM 纠错已实现
 - [ ] 语音输出（TTS）- 实现语音问答
-- [ ] 前端录音按钮 + 播放器
+- [x] 前端录音按钮 - ✅ AudioRecorder 组件已集成
 
 ### 🔌 MCP & 工具调用
 - [ ] 接入 MCP 工具（检索、摘要、结构化输出）
@@ -310,7 +350,8 @@ data: {"type": "done", "request_id": "123", "latency_ms": 5678}
 - 检索召回效果提升
 - 引用展示优化
 - Prompt 安全边界
-- 语音交互实现
+- 语音纠错规则扩展（添加更多医疗术语映射）
+- TTS 语音输出实现
 
 ---
 

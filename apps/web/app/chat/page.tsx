@@ -1,8 +1,8 @@
-// apps/web/app/chat/page.tsx
 "use client";
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import AudioRecorder from "@/components/AudioRecorder"; // 引入我们刚写的组件
 
 // 引用弹窗组件
 function SourceTooltip({
@@ -85,6 +85,12 @@ export default function ChatPage() {
     const [streamRequestId, setStreamRequestId] = useState<string>("");
     const [error, setError] = useState<string | null>(null);
 
+    // --- 新增：处理语音转文字的回调 ---
+    const handleVoiceInput = (text: string) => {
+        // 如果输入框里已经有字了，就加个空格追加在后面
+        setQuestion((prev) => (prev ? prev + " " + text : text));
+    };
+
     async function onAsk() {
         const q = question.trim();
         if (!q) return;
@@ -153,21 +159,16 @@ export default function ChatPage() {
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split("\n");
-                buffer = lines.pop() || ""; // 保留未完成的行
+                buffer = lines.pop() || "";
 
                 for (const line of lines) {
                     if (!line.trim()) continue;
-
-                    // 解析 SSE 事件
                     let eventLine = line;
-                    let eventData = "";
 
-                    // 检查是否有 event: 行
                     if (line.startsWith("event: ")) {
-                        continue; // 下一行应该是 data:
+                        continue;
                     }
 
-                    // 解析 data: 行
                     if (line.startsWith("data: ")) {
                         const jsonStr = line.slice(6);
                         try {
@@ -188,7 +189,7 @@ export default function ChatPage() {
                                 case "done":
                                     setStreamRequestId(event.request_id || "");
                                     setStreamLoading(false);
-                                    setShowStreamSources(true); // 答案完成后显示参考来源
+                                    setShowStreamSources(true);
                                     console.log(`Stream completed in ${event.latency_ms}ms`);
                                     break;
 
@@ -220,19 +221,32 @@ export default function ChatPage() {
             </p>
 
             <div style={{ marginTop: 16 }}>
-                <textarea
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    placeholder="输入你的问题，例如：宫颈癌的预防方法有哪些？"
-                    rows={4}
-                    style={{
-                        width: "100%",
-                        padding: 12,
-                        borderRadius: 10,
-                        border: "1px solid rgba(0,0,0,0.15)",
-                        fontSize: 14,
-                    }}
-                />
+                <div style={{ position: "relative" }}>
+                    <textarea
+                        value={question}
+                        onChange={(e) => setQuestion(e.target.value)}
+                        placeholder="输入你的问题，或者点击右下角麦克风说话..."
+                        rows={4}
+                        style={{
+                            width: "100%",
+                            padding: 12,
+                            paddingBottom: 50, // 底部留白给麦克风
+                            borderRadius: 10,
+                            border: "1px solid rgba(0,0,0,0.15)",
+                            fontSize: 14,
+                            resize: "vertical"
+                        }}
+                    />
+
+                    {/* --- 新增：麦克风按钮定位在输入框内部右下角 --- */}
+                    <div style={{ position: "absolute", bottom: 10, right: 10 }}>
+                        <AudioRecorder
+                            onTranscribe={handleVoiceInput}
+                            disabled={loading || streamLoading}
+                        />
+                    </div>
+                </div>
+
                 <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
                     <button
                         onClick={onAsk}
